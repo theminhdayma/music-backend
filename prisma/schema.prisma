@@ -1,0 +1,277 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String    @unique @db.VarChar(255)
+  passwordHash String?   @map("password_hash") @db.VarChar(255)
+  role         String    @default("consumer") @db.VarChar(20) // creator, remixer, consumer, admin
+  displayName  String?   @map("display_name") @db.VarChar(100)
+  avatarUrl    String?   @map("avatar_url") @db.Text
+  bio          String?   @db.Text
+  isVerified   Boolean   @default(false) @map("is_verified")
+  isBanned     Boolean   @default(false) @map("is_banned")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  songs              Song[]
+  oauthAccounts      OAuthAccount[]
+  userLicenses       UserLicense[]
+  wallet             UserWallet?
+  payouts            Payout[]
+  ownershipRelations OwnershipRelation[]
+  royaltyTxs         RoyaltyTransaction[]
+  likes              Like[]
+  comments           Comment[]
+  
+  // Follows
+  followers          Follow[]            @relation("FollowingRelation")
+  following          Follow[]            @relation("FollowerRelation")
+
+  @@map("users")
+}
+
+model OAuthAccount {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  provider          String   @db.VarChar(50) // google, spotify, discord
+  providerAccountId String   @map("provider_account_id") @db.VarChar(255)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("oauth_accounts")
+}
+
+model Song {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId               String   @map("owner_id") @db.Uuid
+  title                 String   @db.VarChar(255)
+  genre                 String?  @db.VarChar(50)
+  bpm                   Decimal? @db.Decimal(6, 2)
+  key                   String?  @db.VarChar(10)
+  mood                  String?  @db.VarChar(50)
+  tags                  String[]
+  lyrics                String?  @db.Text
+  instruments           String[]
+  vocalType             String?  @map("vocal_type") @db.VarChar(50)
+  fileUrl               String   @map("file_url") @db.Text
+  duration              Int?     // seconds
+  licenseType           String   @default("personal") @map("license_type") @db.VarChar(20) // personal, commercial, remix, exclusive
+  remixAllowed          Boolean  @default(true) @map("remix_allowed")
+  commercialAllowed     Boolean  @default(false) @map("commercial_allowed")
+  aiVoiceCloningAllowed Boolean  @default(false) @map("ai_voice_cloning_allowed")
+  royaltySplitRemixer   Decimal  @default(20.00) @map("royalty_split_remixer") @db.Decimal(5, 2)
+  royaltySplitPlatform  Decimal  @default(10.00) @map("royalty_split_platform") @db.Decimal(5, 2)
+  processingStatus      String   @default("queued") @map("processing_status") @db.VarChar(20) // queued, processing, done, failed
+  isPublished           Boolean  @default(false) @map("is_published")
+  totalStreams          Int      @default(0) @map("total_streams")
+  totalRemixes          Int      @default(0) @map("total_remixes")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  owner              User                @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  stems              Stem[]
+  analysis           SongAnalysis?
+  licenseConfig      SongLicenseConfig?
+  ownershipAsParent  OwnershipRelation[] @relation("ParentSong")
+  ownershipAsChild   OwnershipRelation[] @relation("ChildSong")
+  userLicenses       UserLicense[]
+  royaltyTxs         RoyaltyTransaction[]
+  likes              Like[]
+  comments           Comment[]
+
+  @@index([ownerId])
+  @@index([genre])
+  @@index([isPublished])
+  @@map("songs")
+}
+
+model Stem {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  songId    String   @map("song_id") @db.Uuid
+  type      String   @db.VarChar(50) // vocal, drums, bass, melody, other
+  fileUrl   String   @map("file_url") @db.Text
+  duration  Int?     // seconds
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@map("stems")
+}
+
+model SongAnalysis {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  songId    String   @unique @map("song_id") @db.Uuid
+  bpm       Decimal? @db.Decimal(6, 2)
+  key       String?  @db.VarChar(10)
+  mood      String?  @db.VarChar(50)
+  waveform  Json?    // Array of float amplitude values
+  duration  Int?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@map("song_analysis")
+}
+
+model SongLicenseConfig {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  songId          String   @unique @map("song_id") @db.Uuid
+  personalPrice   Int      @map("personal_price") // cents
+  commercialPrice Int      @map("commercial_price") // cents
+  remixPrice      Int      @map("remix_price") // cents
+  exclusivePrice  Int      @map("exclusive_price") // cents
+  personalEnabled    Boolean  @default(true) @map("personal_enabled")
+  commercialEnabled  Boolean  @default(true) @map("commercial_enabled")
+  remixEnabled       Boolean  @default(true) @map("remix_enabled")
+  exclusiveEnabled   Boolean  @default(false) @map("exclusive_enabled")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@map("song_license_configs")
+}
+
+model OwnershipRelation {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  parentSongId     String?  @map("parent_song_id") @db.Uuid // NULL for original songs
+  childSongId      String   @map("child_song_id") @db.Uuid
+  ownerId          String   @map("owner_id") @db.Uuid
+  splitPercentage  Decimal  @map("split_percentage") @db.Decimal(5, 2)
+  relationshipType String   @default("remix") @map("relationship_type") @db.VarChar(20) // original, remix, cover, sample
+  licenseRules     Json?    @map("license_rules")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  parent Song? @relation("ParentSong", fields: [parentSongId], references: [id], onDelete: Restrict)
+  child  Song  @relation("ChildSong", fields: [childSongId], references: [id], onDelete: Cascade)
+  owner  User  @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+
+  @@index([parentSongId])
+  @@index([childSongId])
+  @@index([ownerId])
+  @@map("ownership_relations")
+}
+
+model UserLicense {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  songId     String    @map("song_id") @db.Uuid
+  licenseType String    @map("license_type") @db.VarChar(20)
+  pricePaid  Int       @map("price_paid") // cents
+  currency   String    @default("USD") @db.VarChar(3)
+  paymentId  String?   @unique @map("payment_id") @db.VarChar(255)
+  licenseKey String    @unique @map("license_key") @db.VarChar(255)
+  expiresAt  DateTime? @map("expires_at") @db.Timestamptz
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  song Song @relation(fields: [songId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([songId])
+  @@map("user_licenses")
+}
+
+model RoyaltyTransaction {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  songId       String   @map("song_id") @db.Uuid
+  eventType    String   @map("event_type") @db.VarChar(30) // stream, license_purchase, etc.
+  eventId      String   @map("event_id") @db.Uuid
+  role         String   @db.VarChar(30) // original_creator, remixer, platform
+  grossAmount  Int      @map("gross_amount") // cents
+  platformFee  Int      @map("platform_fee") // cents
+  netAmount    Int      @map("net_amount") // cents
+  currency     String   @default("USD") @db.VarChar(3)
+  status       String   @default("credited") @db.VarChar(20) // pending, credited, paid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  song Song @relation(fields: [songId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([songId])
+  @@index([eventId])
+  @@map("royalty_transactions")
+}
+
+model UserWallet {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @unique @map("user_id") @db.Uuid
+  balanceUsd  Int      @default(0) @map("balance_usd") // cents
+  totalEarned Int      @default(0) @map("total_earned") // cents
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_wallets")
+}
+
+model Payout {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  amount     Int      // cents
+  method     String   @db.VarChar(50) // stripe, momo, vnpay
+  status     String   @default("pending") @db.VarChar(20) // pending, processing, completed, failed
+  externalId String?  @map("external_id") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("payouts")
+}
+
+model Follow {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  follower  User @relation("FollowerRelation", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("FollowingRelation", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@map("follows")
+}
+
+model Like {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  songId    String   @map("song_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, songId])
+  @@map("likes")
+}
+
+model Comment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  songId    String   @map("song_id") @db.Uuid
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@map("comments")
+}
