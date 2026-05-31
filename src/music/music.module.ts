@@ -7,6 +7,8 @@ import { OwnershipService } from './ownership.service';
 import { OwnershipController } from './ownership.controller';
 import { SocialService } from './social.service';
 import { SocialController } from './social.controller';
+import { RemixController } from './remix.controller';
+import { RemixService } from './remix.service';
 import { BullModule } from '@nestjs/bullmq';
 import { AnalysisCompletedProcessor } from './audio-analysis.processor';
 import { MusicGateway } from './music.gateway';
@@ -25,12 +27,14 @@ import { MusicGateway } from './music.gateway';
     MusicController,
     OwnershipController,
     SocialController,
+    RemixController,
   ],
   providers: [
     MusicUploadService,
     MusicService,
     OwnershipService,
     SocialService,
+    RemixService,
     AnalysisCompletedProcessor,
     MusicGateway,
   ],
@@ -39,6 +43,7 @@ import { MusicGateway } from './music.gateway';
     MusicService,
     OwnershipService,
     SocialService,
+    RemixService,
     AnalysisCompletedProcessor,
     MusicGateway,
   ],

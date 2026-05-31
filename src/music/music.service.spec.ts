@@ -2,6 +2,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { MusicService } from './music.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { R2Service } from '../prisma/r2.service';
 import {
   BadRequestException,
   NotFoundException,
@@ -11,6 +12,7 @@ import {
 describe('MusicService', () => {
   let service: MusicService;
   let prisma: PrismaService;
+  let r2Service: R2Service;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -27,11 +29,19 @@ describe('MusicService', () => {
             },
           },
         },
+        {
+          provide: R2Service,
+          useValue: {
+            getS3Client: jest.fn(),
+            getBucketName: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<MusicService>(MusicService);
     prisma = module.get<PrismaService>(PrismaService);
+    r2Service = module.get<R2Service>(R2Service);
   });
 
   it('should be defined', () => {
@@ -52,6 +62,70 @@ describe('MusicService', () => {
       await expect(service.findOne('invalid-uuid')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('getPlaybackStream', () => {
+    it('should return a stream for the full song', async () => {
+      const bodyStream = { readable: true } as never;
+      (prisma.song.findUnique as jest.Mock).mockResolvedValue({
+        id: 'song-uuid',
+        title: 'Song 1',
+        fileUrl: 'songs/song-uuid/song.wav',
+        stems: [],
+      });
+      const sendMock = jest.fn().mockResolvedValue({
+        Body: bodyStream,
+        ContentType: 'audio/wav',
+      });
+      (r2Service.getS3Client as jest.Mock).mockReturnValue({ send: sendMock });
+      (r2Service.getBucketName as jest.Mock).mockReturnValue('stemverse-audio');
+
+      const result = await service.getPlaybackStream('song-uuid');
+
+      expect(sendMock).toHaveBeenCalled();
+      expect(result.stream).toBe(bodyStream);
+      expect(result.contentType).toBe('audio/wav');
+    });
+
+    it('should return a stream for a specific stem', async () => {
+      const bodyStream = { readable: true } as never;
+      (prisma.song.findUnique as jest.Mock).mockResolvedValue({
+        id: 'song-uuid',
+        title: 'Song 1',
+        fileUrl: 'songs/song-uuid/song.wav',
+        stems: [
+          {
+            id: 'stem-1',
+            type: 'vocal',
+            fileUrl: 'songs/song-uuid/stems/vocal.wav',
+          },
+        ],
+      });
+      const sendMock = jest.fn().mockResolvedValue({
+        Body: bodyStream,
+        ContentType: 'audio/wav',
+      });
+      (r2Service.getS3Client as jest.Mock).mockReturnValue({ send: sendMock });
+      (r2Service.getBucketName as jest.Mock).mockReturnValue('stemverse-audio');
+
+      const result = await service.getPlaybackStream('song-uuid', 'stem-1');
+
+      expect(result.filename).toBe('vocal');
+      expect(sendMock).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException if the stem does not exist', async () => {
+      (prisma.song.findUnique as jest.Mock).mockResolvedValue({
+        id: 'song-uuid',
+        title: 'Song 1',
+        fileUrl: 'songs/song-uuid/song.wav',
+        stems: [],
+      });
+
+      await expect(
+        service.getPlaybackStream('song-uuid', 'stem-missing'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

@@ -5,12 +5,17 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
+import { R2Service } from '../prisma/r2.service';
 import { UpdateSongDto } from './dto/update-song.dto';
 
 @Injectable()
 export class MusicService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private r2Service: R2Service,
+  ) {}
 
   async findAll(filters: {
     genre?: string;
@@ -63,6 +68,54 @@ export class MusicService {
     }
 
     return song;
+  }
+
+  async getPlaybackStream(id: string, stemId?: string) {
+    const song = await this.prisma.song.findUnique({
+      where: { id },
+      include: {
+        stems: {
+          select: {
+            id: true,
+            type: true,
+            fileUrl: true,
+          },
+        },
+      },
+    });
+
+    if (!song) {
+      throw new NotFoundException(`Song with ID ${id} not found`);
+    }
+
+    const selectedStem = stemId
+      ? song.stems.find((stem) => stem.id === stemId)
+      : null;
+
+    if (stemId && !selectedStem) {
+      throw new NotFoundException(
+        `Stem with ID ${stemId} not found for song ${id}`,
+      );
+    }
+
+    const fileUrl = selectedStem?.fileUrl || song.fileUrl;
+
+    const response = await this.r2Service.getS3Client().send(
+      new GetObjectCommand({
+        Bucket: this.r2Service.getBucketName(),
+        Key: fileUrl,
+      }),
+    );
+
+    if (!response.Body) {
+      throw new BadRequestException('Audio playback stream is unavailable');
+    }
+
+    return {
+      stream: response.Body,
+      contentType: response.ContentType || this.getContentType(fileUrl),
+      filename: selectedStem?.type || song.title,
+    };
   }
 
   async update(id: string, ownerId: string, dto: UpdateSongDto) {
@@ -125,5 +178,13 @@ export class MusicService {
     return this.prisma.song.delete({
       where: { id },
     });
+  }
+
+  private getContentType(fileUrl: string): string {
+    const ext = fileUrl.split('.').pop()?.toLowerCase();
+    if (ext === 'mp3') return 'audio/mpeg';
+    if (ext === 'wav') return 'audio/wav';
+    if (ext === 'flac') return 'audio/flac';
+    return 'application/octet-stream';
   }
 }

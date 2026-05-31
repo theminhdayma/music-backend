@@ -8,11 +8,14 @@ import {
   Query,
   Req,
   UseGuards,
+  StreamableFile,
+  Res,
 } from '@nestjs/common';
 import { MusicService } from './music.service';
 import { UpdateSongDto } from './dto/update-song.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
+import type { Response } from 'express';
 
 @Controller('music/songs')
 export class MusicController {
@@ -40,6 +43,19 @@ export class MusicController {
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.musicService.findOne(id);
+  }
+
+  @Get(':id/playback')
+  async playback(
+    @Param('id') id: string,
+    @Query('stemId') stemId: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const playback = await this.musicService.getPlaybackStream(id, stemId);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return new StreamableFile(playback.stream as never, {
+      type: playback.contentType,
+    });
   }
 
   @Put(':id')
